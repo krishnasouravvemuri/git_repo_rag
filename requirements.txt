@@ -8,3 +8,6 @@ langchain-groq
 python-dotenv
 langchain_openai
 langgraph
+Django
+daphne
+djangorestframework
