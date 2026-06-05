@@ -2,6 +2,7 @@ langchain
 langchain-core
 langchain-community
 chromadb
+chardet
 sentence-transformers
 chromadb
 langchain-groq
@@ -11,3 +12,5 @@ langgraph
 Django
 daphne
 djangorestframework
+djangorestframework-simplejwt
+django-cors-headers

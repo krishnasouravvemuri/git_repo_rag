@@ -55,8 +55,9 @@ class RepoLoader:
                 glob=self.file_glob,
                 exclude=self.exclude,
                 loader_cls=TextLoader,
-                loader_kwargs={"encoding": "utf-8", "autodetect_encoding": True},
+                loader_kwargs={"encoding": "utf-8", "autodetect_encoding": False},
                 show_progress=False,
+                silent_errors=True,
             )
             return loader.load()
     
