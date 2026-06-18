@@ -14,7 +14,7 @@ class RAGSearch:
         collection_name: str = "rag_collection",
         model_name: str = "all-MiniLM-L6-v2",
         groq_model: str = "llama-3.1-8b-instant",
-        top_k: int = 5,
+        top_k: int = 8,
         temperature: float = 0.2,
     ):
         load_dotenv()
@@ -27,18 +27,38 @@ class RAGSearch:
         self.client = chromadb.PersistentClient(path=persist_dir)
         self.collection = self.client.get_or_create_collection(name=self.collection_name)
 
-    def retrieve(self, query: str, repo_id: Optional[str] = None, top_k: Optional[int] = None):
+    def retrieve(self, query: str, repo_id: Optional[str] = None, top_k: Optional[int] = None,
+                 max_per_file: int = 2):
+        k = top_k or self.top_k
         query_embedding = self.embedding_model.encode([query]).tolist()
+        # over-fetch, then diversify so a single large file can't flood the context
         query_params = {
             "query_embeddings": query_embedding,
-            "n_results": top_k or self.top_k,
+            "n_results": max(k * 5, 30),
             "include": ["documents", "metadatas", "distances"],
         }
-
         if repo_id:
             query_params["where"] = {"repo_id": repo_id}
 
-        return self.collection.query(**query_params)
+        raw = self.collection.query(**query_params)
+        docs = raw.get("documents", [[]])[0]
+        metas = raw.get("metadatas", [[]])[0]
+        dists = raw.get("distances", [[]])[0]
+
+        seen = {}
+        out_docs, out_metas, out_dists = [], [], []
+        for doc, meta, dist in zip(docs, metas, dists):
+            src = (meta or {}).get("source") or (meta or {}).get("path") or "?"
+            if seen.get(src, 0) >= max_per_file:
+                continue
+            seen[src] = seen.get(src, 0) + 1
+            out_docs.append(doc)
+            out_metas.append(meta)
+            out_dists.append(dist)
+            if len(out_docs) >= k:
+                break
+
+        return {"documents": [out_docs], "metadatas": [out_metas], "distances": [out_dists]}
 
     def fetch_repo_data(self, repo_id: str):
         return self.collection.get(
@@ -54,6 +74,12 @@ class RAGSearch:
         for i, doc in enumerate(docs):
             meta = metas[i] if metas and i < len(metas) else {}
             source = meta.get("source") or meta.get("path") or meta.get("file_path") or ""
+            # strip the temp clone dir prefix (e.g. /tmp/repo_loader_xxx/) for clean citations
+            if source:
+                idx = source.find("repo_loader_")
+                if idx != -1:
+                    rest = source[idx:]
+                    source = rest.split("/", 1)[1] if "/" in rest else rest
             header = f"Source: {source}\n" if source else ""
             context_parts.append(f"{header}{doc}")
 
@@ -64,8 +90,13 @@ class RAGSearch:
         context = self._format_context(results)
 
         prompt = (
-            "You are an agent that are helping the user to understand his code base."
-            f"Context:\n{context}\n\nQuestion: {query}"
+            "You are a senior engineer helping the user understand a codebase. "
+            "Answer the question using ONLY the code context below. "
+            "Each context block starts with its 'Source:' file path — cite the relevant "
+            "file paths in your answer. If the context does not contain enough information "
+            "to answer, say so plainly and do NOT guess or invent details.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Question: {query}\n\nAnswer:"
         )
         response = self.llm.invoke(prompt)
         return response.content, results

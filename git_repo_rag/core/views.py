@@ -4,7 +4,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from rest_framework.parsers import FormParser, MultiPartParser
+
 from .models import RepoIngestion, RepoQuestion
+from .transcribe import VoiceTranscriber
 from utils.response import ApiResponse
 
 DATA_DIR = "data"
@@ -67,6 +70,16 @@ class IngestRepoView(APIView):
 class RepoListView(APIView):
     def get(self, request):
         response_data, status_code, message = RepoIngestion.list_for_user(request.user)
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+
+class TranscribeView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        response_data, status_code, message = VoiceTranscriber().transcribe(
+            audio_file=request.FILES.get("audio"),
+        )
         return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
 
 

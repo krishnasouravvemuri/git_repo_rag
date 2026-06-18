@@ -6,6 +6,7 @@ from .views import (
     LoginView,
     RegisterView,
     RepoListView,
+    TranscribeView,
 )
 
 urlpatterns = [
@@ -14,4 +15,5 @@ urlpatterns = [
     path("ingest", IngestRepoView.as_view(), name="ingest_repo"),
     path("repos", RepoListView.as_view(), name="repo_list"),
     path("ask", AskView.as_view(), name="ask"),
+    path("transcribe", TranscribeView.as_view(), name="transcribe"),
 ]

@@ -65,3 +65,32 @@ export function listRepos() {
 export function askQuestion(question, repo_id) {
   return request('POST', 'ask', { question, repo_id: repo_id || null })
 }
+
+export async function transcribeAudio(blob) {
+  const headers = {}
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const form = new FormData()
+  form.append('audio', blob, 'recording.webm')
+
+  const res = await fetch(`${BASE}/transcribe`, { method: 'POST', headers, body: form })
+
+  if (res.status === 401) {
+    clearSession()
+    throw new Error('Session expired. Please log in again.')
+  }
+
+  let json
+  try {
+    json = await res.json()
+  } catch {
+    throw new Error(`Bad response (${res.status})`)
+  }
+
+  const message = json?.meta?.message
+  if (!res.ok || json?.data?.error) {
+    throw new Error(json?.data?.error || message || `Request failed (${res.status})`)
+  }
+  return json.data.text
+}

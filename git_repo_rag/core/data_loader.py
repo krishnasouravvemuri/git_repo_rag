@@ -28,6 +28,25 @@ class RepoLoader:
             "**/dist/**",
             "build/**",
             "**/build/**",
+            # lock files — huge, no semantic value, flood the index
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml",
+            "**/poetry.lock",
+            "**/Pipfile.lock",
+            "**/composer.lock",
+            "**/Cargo.lock",
+            "**/go.sum",
+            "**/*.lock",
+            # minified / generated / maps
+            "**/*.min.js",
+            "**/*.min.css",
+            "**/*.map",
+            "**/*.bundle.js",
+            # binary-ish text that adds noise
+            "**/*.svg",
+            "**/*.csv",
+            "**/*.ipynb",
         ]
 
     @contextmanager

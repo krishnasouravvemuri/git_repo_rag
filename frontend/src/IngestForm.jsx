@@ -57,7 +57,6 @@ export default function IngestForm({ onIngested }) {
 
   return (
     <section className="card">
-      <h2>Ingest a Repository</h2>
       <form onSubmit={handleSubmit}>
         <label>
           Title

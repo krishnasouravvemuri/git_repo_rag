@@ -95,6 +95,40 @@
 └───────────────────────────┘
 ```
 
+```
+          VOICE INPUT FLOW (search bar mic)
+
+┌───────────────────────────┐
+│ User taps mic 🎤          │
+│ frontend/src/Ask.jsx      │
+└─────────────┬─────────────┘
+              │
+              ├──────────────────────────────┐
+              v                              v
+┌───────────────────────────┐  ┌───────────────────────────┐
+│ Web Speech API            │  │ getUserMedia + AnalyserNode│
+│ (browser, live STT)       │  │ live RMS volume → mic      │
+│ interimResults = true     │  │ jiggle; 2s silence = stop  │
+└─────────────┬─────────────┘  └───────────────────────────┘
+              │ word-by-word transcript
+              v
+┌───────────────────────────┐
+│ Question textarea fills    │
+│ live (English forced)      │
+└─────────────┬─────────────┘
+              │  (user submits → QUERY FLOW above)
+              v
+        [ Ask question ]
+
+  Batch fallback (not used by current UI):
+┌───────────────────────────┐      ┌───────────────────────────┐
+│ Recorded audio blob        │ ───> │ POST /api/v2/core/transcribe│
+│                            │      │ core/transcribe.py          │
+└───────────────────────────┘      │ Groq Whisper (whisper-      │
+                                    │ large-v3, OpenAI-compatible)│
+                                    └───────────────────────────┘
+```
+
 ## File Explanations
 
 ### main.py
@@ -114,6 +148,12 @@ Creates a UUID for the repo, parses the repo owner from the URL, and builds meta
 
 ### src/rag_search.py
 Embeds the user query, queries Chroma with an optional `repo_id` filter, formats context, and sends it to the LLM. Also supports fetching all stored data for a repo via `fetch_repo_data`.
+
+### core/transcribe.py
+`VoiceTranscriber` — batch speech-to-text via Groq Whisper (`whisper-large-v3`, OpenAI-compatible client pointed at Groq). Takes an uploaded audio blob, forces `language="en"`, returns transcript text. Exposed at `POST /api/v2/core/transcribe`. Available as a fallback; the live UI uses the browser instead.
+
+### frontend/src/Ask.jsx (voice input)
+Search-bar mic. Uses the browser **Web Speech API** (`SpeechRecognition`, `interimResults`) for live, word-by-word English transcription straight into the question box — no backend round-trip. A parallel `getUserMedia` + `AnalyserNode` reads live mic volume (RMS) to make the mic icon jiggle with the voice and auto-stops after ~2s of silence. Works in Chrome/Edge.
 
 ### requirements.txt
 Lists runtime dependencies such as LangChain, ChromaDB, Sentence Transformers, and the Groq client.
