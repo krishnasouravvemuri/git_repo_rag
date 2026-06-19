@@ -6,6 +6,17 @@ from langchain_groq import ChatGroq
 from sentence_transformers import SentenceTransformer
 
 
+def _clean_source_path(source: str) -> str:
+    source = source.replace("\\", "/")
+    marker = "repo_loader_"
+    idx = source.find(marker)
+    if idx == -1:
+        return source
+
+    rest = source[idx:]
+    return rest.split("/", 1)[1] if "/" in rest else rest
+
+
 class RAGSearch:
 
     def __init__(
@@ -74,12 +85,8 @@ class RAGSearch:
         for i, doc in enumerate(docs):
             meta = metas[i] if metas and i < len(metas) else {}
             source = meta.get("source") or meta.get("path") or meta.get("file_path") or ""
-            # strip the temp clone dir prefix (e.g. /tmp/repo_loader_xxx/) for clean citations
             if source:
-                idx = source.find("repo_loader_")
-                if idx != -1:
-                    rest = source[idx:]
-                    source = rest.split("/", 1)[1] if "/" in rest else rest
+                source = _clean_source_path(source)
             header = f"Source: {source}\n" if source else ""
             context_parts.append(f"{header}{doc}")
 
@@ -92,8 +99,7 @@ class RAGSearch:
         prompt = (
             "You are a senior engineer helping the user understand a codebase. "
             "Answer the question using ONLY the code context below. "
-            "Each context block starts with its 'Source:' file path — cite the relevant "
-            "file paths in your answer. If the context does not contain enough information "
+            "If the context does not contain enough information "
             "to answer, say so plainly and do NOT guess or invent details.\n\n"
             f"Context:\n{context}\n\n"
             f"Question: {query}\n\nAnswer:"

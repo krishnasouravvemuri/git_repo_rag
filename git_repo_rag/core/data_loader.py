@@ -11,7 +11,7 @@ class RepoLoader:
         self.repo_link = repo_link
         self.branch = branch
         self.file_glob = file_glob
-        self.exclude = list(exclude) if exclude is not None else [
+        default_exclude = [
             ".git/**",
             "**/.git/**",
             "venv/**",
@@ -47,7 +47,19 @@ class RepoLoader:
             "**/*.svg",
             "**/*.csv",
             "**/*.ipynb",
+            "**/data/**",
+            "data/**",
+            "**/db.sqlite3",
+            "db.sqlite3",
+            "**/*.bin",
+            "**/*.db",
+            "**/*.sqlite3",
+            "**/*.pkl",
+            "**/*.pickle",
+            "**/*.npy",
+            "**/*.npz",
         ]
+        self.exclude = list(dict.fromkeys(default_exclude + list(exclude or [])))
 
     @contextmanager
     def build_repo(self):
