@@ -1,21 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import { askQuestion } from './api'
+import { askQuestion, transcribeAudio } from './api'
 
-const SR = typeof window !== 'undefined'
-  ? window.SpeechRecognition || window.webkitSpeechRecognition
-  : null
-
-export default function Ask({ repos, selectedId, onAnswered }) {
+export default function Ask({ repos, selectedId, onAnswered, onStartConversation }) {
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [listening, setListening] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
   const [level, setLevel] = useState(0) // 0..1 live mic volume
   const [copied, setCopied] = useState(false)
+  const [choosing, setChoosing] = useState(false) // mic mode chooser open
 
-  const recognitionRef = useRef(null)
-  const baseTextRef = useRef('')
+  const recorderRef = useRef(null)
+  const chunksRef = useRef([])
   const streamRef = useRef(null)
   const audioCtxRef = useRef(null)
   const rafRef = useRef(null)
@@ -58,11 +56,9 @@ export default function Ask({ repos, selectedId, onAnswered }) {
     }
   }
 
-  // ---- live volume meter (drives mic jiggle) ----
-  async function startMeter() {
+  // ---- live volume meter (drives mic jiggle); shares recorder's stream ----
+  function startMeter(stream) {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
       const ctx = new (window.AudioContext || window.webkitAudioContext)()
       audioCtxRef.current = ctx
       const src = ctx.createMediaStreamSource(stream)
@@ -85,72 +81,92 @@ export default function Ask({ repos, selectedId, onAnswered }) {
         const now = performance.now()
         if (rms > 0.02) lastSoundRef.current = now
         else if (now - lastSoundRef.current > 2000) {
-          stopListening() // 2s silence → auto stop
+          stopListening() // 2s silence → auto stop & transcribe
           return
         }
         rafRef.current = requestAnimationFrame(tick)
       }
       tick()
     } catch {
-      /* meter optional — ignore if mic blocked here */
+      /* meter optional — ignore if AudioContext unavailable */
     }
   }
 
   function stopMeter() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     rafRef.current = null
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
     audioCtxRef.current?.close().catch(() => {})
     audioCtxRef.current = null
     setLevel(0)
   }
 
-  // ---- live speech-to-text ----
-  function startListening() {
-    if (!SR) {
-      setError('Live voice input needs Chrome or Edge.')
+  // ---- record audio → backend Whisper (Groq) transcription ----
+  async function startListening() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setError('Voice input not supported in this browser.')
       return
     }
     setError('')
-    baseTextRef.current = question ? question.trim() + ' ' : ''
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      chunksRef.current = []
 
-    const rec = new SR()
-    rec.lang = 'en-US'
-    rec.continuous = true
-    rec.interimResults = true
-
-    rec.onresult = (e) => {
-      let transcript = ''
-      for (let i = 0; i < e.results.length; i++) {
-        transcript += e.results[i][0].transcript
+      const rec = new MediaRecorder(stream)
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data)
       }
-      setQuestion(baseTextRef.current + transcript) // updates word by word
-    }
-    rec.onerror = (e) => {
-      if (e.error !== 'aborted') setError(`Voice error: ${e.error}`)
-    }
-    rec.onend = () => {
-      setListening(false)
-      stopMeter()
-    }
+      rec.onstop = async () => {
+        streamRef.current?.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
+        if (blob.size === 0) return
+        setTranscribing(true)
+        try {
+          const text = await transcribeAudio(blob)
+          if (text) setQuestion((q) => (q.trim() ? q.trim() + ' ' : '') + text)
+        } catch (err) {
+          setError(err.message)
+        } finally {
+          setTranscribing(false)
+        }
+      }
 
-    recognitionRef.current = rec
-    rec.start()
-    setListening(true)
-    startMeter()
+      recorderRef.current = rec
+      rec.start()
+      setListening(true)
+      startMeter(stream)
+    } catch {
+      setError('Microphone access denied.')
+    }
   }
 
   function stopListening() {
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
     stopMeter()
     setListening(false)
+    const rec = recorderRef.current
+    recorderRef.current = null
+    if (rec && rec.state !== 'inactive') rec.stop()
+    else streamRef.current?.getTracks().forEach((t) => t.stop())
   }
 
   function toggleListening() {
-    if (listening) stopListening()
-    else startListening()
+    if (listening) {
+      stopListening()
+      return
+    }
+    // mic tapped while idle → ask what kind of voice interaction
+    setChoosing(true)
+  }
+
+  function chooseQuestion() {
+    setChoosing(false)
+    startListening()
+  }
+
+  function chooseConversation() {
+    setChoosing(false)
+    onStartConversation?.()
   }
 
   // jiggle intensity from live level
@@ -163,6 +179,27 @@ export default function Ask({ repos, selectedId, onAnswered }) {
 
   return (
     <section className="card">
+      {choosing && (
+        <div className="modal-backdrop" onClick={() => setChoosing(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Voice input</h3>
+            <p className="muted">How do you want to use the mic?</p>
+            <div className="choice-row">
+              <button type="button" className="choice" onClick={chooseQuestion}>
+                <span className="choice-ico">❓</span>
+                <strong>Question</strong>
+                <span className="muted">Dictate one question into the box.</span>
+              </button>
+              <button type="button" className="choice" onClick={chooseConversation}>
+                <span className="choice-ico">🗣️</span>
+                <strong>Conversation</strong>
+                <span className="muted">Talk back and forth; answers read aloud.</span>
+              </button>
+            </div>
+            <button type="button" className="link" onClick={() => setChoosing(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
       <form onSubmit={handleSubmit}>
         <label>
           Question
@@ -179,6 +216,7 @@ export default function Ask({ repos, selectedId, onAnswered }) {
               className={`mic${listening ? ' listening' : ''}`}
               style={micStyle}
               onClick={toggleListening}
+              disabled={transcribing}
               title={listening ? 'Stop' : 'Speak your question'}
               aria-label={listening ? 'Stop listening' : 'Start voice input'}
             >
@@ -192,7 +230,8 @@ export default function Ask({ repos, selectedId, onAnswered }) {
             </button>
           </div>
         </label>
-        {listening && <p className="muted listening-hint">● Listening… speak now</p>}
+        {listening && <p className="muted listening-hint">● Recording… speak now</p>}
+        {transcribing && <p className="muted listening-hint">Transcribing…</p>}
         <button type="submit" disabled={loading}>
           {loading ? 'Thinking…' : 'Ask'}
         </button>

@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
@@ -6,8 +7,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from rest_framework.parsers import FormParser, MultiPartParser
 
-from .models import RepoIngestion, RepoQuestion
-from .transcribe import VoiceTranscriber
+from .models import Conversation, RepoIngestion, RepoQuestion
+from .transcribe import VoiceSynthesizer, VoiceTranscriber
 from utils.response import ApiResponse
 
 DATA_DIR = "data"
@@ -89,5 +90,67 @@ class AskView(APIView):
             question=request.data.get("question"),
             repo_id=request.data.get("repo_id"),
             persist_dir=DATA_DIR,
+            user=request.user,
         )
         return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+
+class QuestionListView(APIView):
+    def get(self, request):
+        response_data, status_code, message = RepoQuestion.list_for_user(request.user)
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+
+class QuestionDetailView(APIView):
+    def delete(self, request, question_id):
+        response_data, status_code, message = RepoQuestion.delete_for_user(request.user, question_id)
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+
+class ConversationListView(APIView):
+    def get(self, request):
+        response_data, status_code, message = Conversation.list_for_user(request.user)
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+    def post(self, request):
+        response_data, status_code, message = Conversation.start(
+            user=request.user,
+            repo_id=request.data.get("repo_id"),
+            title=request.data.get("title"),
+        )
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+
+class ConversationDetailView(APIView):
+    def get(self, request, conversation_id):
+        conv = Conversation.objects.filter(id=conversation_id, user=request.user).first()
+        if conv is None:
+            return ApiResponse({"error": "Not found."}, status.HTTP_404_NOT_FOUND, "Not found.").build()
+        response_data, status_code, message = conv.detail()
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+    def delete(self, request, conversation_id):
+        deleted, _ = Conversation.objects.filter(id=conversation_id, user=request.user).delete()
+        if not deleted:
+            return ApiResponse({"error": "Not found."}, status.HTTP_404_NOT_FOUND, "Not found.").build()
+        return ApiResponse({"deleted": conversation_id}, status.HTTP_200_OK, "Deleted").build()
+
+
+class ConversationTurnView(APIView):
+    def post(self, request, conversation_id):
+        conv = Conversation.objects.filter(id=conversation_id, user=request.user).first()
+        if conv is None:
+            return ApiResponse({"error": "Not found."}, status.HTTP_404_NOT_FOUND, "Not found.").build()
+        response_data, status_code, message = conv.add_turn(
+            question=request.data.get("question"),
+            persist_dir=DATA_DIR,
+        )
+        return ApiResponse(response_data=response_data, status_code=status_code, message=message).build()
+
+
+class SpeakView(APIView):
+    def post(self, request):
+        audio, status_code, message = VoiceSynthesizer().synthesize(request.data.get("text"))
+        if audio is None:
+            return ApiResponse({"error": message}, status_code, message).build()
+        return HttpResponse(audio, content_type="audio/wav", status=status_code)

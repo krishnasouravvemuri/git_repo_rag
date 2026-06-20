@@ -1,107 +1,157 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { getConversation } from './api'
 
-export default function History({ items, onClear, onDelete, onEdit }) {
+export default function History({
+  questions,
+  conversations,
+  onDeleteQuestion,
+  onDeleteConversation,
+  onContinueConversation,
+}) {
+  const [section, setSection] = useState('questions') // 'questions' | 'conversations'
   const [openIdx, setOpenIdx] = useState(null)
   const [copied, setCopied] = useState(null)
-  const [editing, setEditing] = useState(null) // ts being edited
-  const [draft, setDraft] = useState('')
+  const [openConv, setOpenConv] = useState(null) // conversation_id whose detail is open
+  const [convDetail, setConvDetail] = useState(null)
+  const [convError, setConvError] = useState('')
 
-  async function copyQA(e, idx, item) {
+  useEffect(() => {
+    if (openConv == null) { setConvDetail(null); return }
+    let alive = true
+    setConvError('')
+    setConvDetail(null)
+    getConversation(openConv)
+      .then((d) => { if (alive) setConvDetail(d) })
+      .catch((err) => { if (alive) setConvError(err.message) })
+    return () => { alive = false }
+  }, [openConv])
+
+  async function copyQA(e, id, item) {
     e.stopPropagation()
     try {
       await navigator.clipboard.writeText(`Q: ${item.question}\n\nA: ${item.answer}`)
-      setCopied(idx)
-      setTimeout(() => setCopied((c) => (c === idx ? null : c)), 1500)
-    } catch {
-      /* clipboard unavailable */
-    }
+      setCopied(id)
+      setTimeout(() => setCopied((c) => (c === id ? null : c)), 1500)
+    } catch { /* clipboard unavailable */ }
   }
 
-  function startEdit(e, item) {
+  function removeQuestion(e, id) {
     e.stopPropagation()
-    setEditing(item.ts)
-    setDraft(item.question)
+    if (window.confirm('Delete this question from history?')) onDeleteQuestion(id)
   }
 
-  function saveEdit(e, ts) {
-    e.stopPropagation()
-    const q = draft.trim()
-    if (q) onEdit(ts, q)
-    setEditing(null)
-  }
-
-  function remove(e, ts) {
-    e.stopPropagation()
-    if (window.confirm('Delete this question from history?')) onDelete(ts)
-  }
-
-  if (!items.length) {
+  // ---- conversation detail view (left/right chat + continue) ----
+  if (openConv != null) {
     return (
-      <div className="empty">
-        <span className="ico">🗂️</span>
-        No questions yet. Use the <strong>Ask</strong> tab — answers show up here.
-      </div>
+      <section>
+        <div className="history-top">
+          <button className="link" onClick={() => setOpenConv(null)}>← Back to history</button>
+        </div>
+        {convError && <p className="error">{convError}</p>}
+        {!convDetail && !convError && <p className="muted">Loading…</p>}
+        {convDetail && (
+          <>
+            <h3>{convDetail.title}</h3>
+            <div className="transcript">
+              <div className="chat">
+                {convDetail.messages.map((m) => (
+                  <div key={m.id} className={`bubble-row ${m.role === 'user' ? 'left' : 'right'}`}>
+                    <div className={`bubble ${m.role}`}>{m.content}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button onClick={() => onContinueConversation(convDetail.conversation_id, convDetail.repo_id)}>
+              Continue conversation
+            </button>
+          </>
+        )}
+      </section>
     )
   }
 
   return (
     <section>
-      <div className="history-top">
-        <button className="link" onClick={onClear}>Clear history</button>
+      <div className="subtabs">
+        <button
+          className={`subtab${section === 'questions' ? ' active' : ''}`}
+          onClick={() => setSection('questions')}
+        >
+          Questions{questions.length ? ` (${questions.length})` : ''}
+        </button>
+        <button
+          className={`subtab${section === 'conversations' ? ' active' : ''}`}
+          onClick={() => setSection('conversations')}
+        >
+          Conversations{conversations.length ? ` (${conversations.length})` : ''}
+        </button>
       </div>
-      {items.map((it, i) => {
-        const expanded = openIdx === i
-        const isEditing = editing === it.ts
-        const firstLine = it.answer.split('\n').find((l) => l.trim()) || it.answer
-        return (
-          <article
-            className={`qa${expanded ? ' open' : ''}`}
-            key={it.ts}
-            onClick={() => !isEditing && setOpenIdx(expanded ? null : i)}
-          >
-            <div className="qa-row">
-              {isEditing ? (
-                <input
-                  className="edit-input"
-                  value={draft}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && saveEdit(e, it.ts)}
-                />
-              ) : (
-                <p className="q">{it.question}</p>
-              )}
 
-              {isEditing ? (
-                <>
-                  <button className="icon-btn" title="Save" onClick={(e) => saveEdit(e, it.ts)}>✓</button>
-                  <button className="icon-btn" title="Cancel" onClick={(e) => { e.stopPropagation(); setEditing(null) }}>✕</button>
-                </>
-              ) : (
-                <>
-                  <button className="icon-btn" title="Copy Q&A" onClick={(e) => copyQA(e, i, it)}>
-                    {copied === i ? '✓' : '⧉'}
+      {section === 'questions' && (
+        questions.length === 0 ? (
+          <div className="empty">
+            <span className="ico">❓</span>
+            No questions yet. Use the <strong>Ask</strong> tab — answers show up here.
+          </div>
+        ) : (
+          questions.map((it, i) => {
+            const expanded = openIdx === i
+            const firstLine = it.answer.split('\n').find((l) => l.trim()) || it.answer
+            return (
+              <article
+                className={`qa${expanded ? ' open' : ''}`}
+                key={it.id}
+                onClick={() => setOpenIdx(expanded ? null : i)}
+              >
+                <div className="qa-row">
+                  <p className="q">{it.question}</p>
+                  <button className="icon-btn" title="Copy Q&A" onClick={(e) => copyQA(e, it.id, it)}>
+                    {copied === it.id ? '✓' : '⧉'}
                   </button>
-                  <button className="icon-btn" title="Edit question" onClick={(e) => startEdit(e, it)}>✎</button>
-                  <button className="icon-btn danger" title="Delete" onClick={(e) => remove(e, it.ts)}>🗑</button>
+                  <button className="icon-btn danger" title="Delete" onClick={(e) => removeQuestion(e, it.id)}>🗑</button>
                   <span className="chevron">{expanded ? '▴' : '▾'}</span>
-                </>
-              )}
-            </div>
-            {expanded ? (
-              <>
-                <p className="a">{it.answer}</p>
-                <div className="meta">
-                  <span>{new Date(it.ts).toLocaleString()}</span>
                 </div>
-              </>
-            ) : (
-              <p className="a preview">{firstLine}</p>
-            )}
-          </article>
+                {expanded ? (
+                  <>
+                    <p className="a">{it.answer}</p>
+                    <div className="meta"><span>{new Date(it.created_at).toLocaleString()}</span></div>
+                  </>
+                ) : (
+                  <p className="a preview">{firstLine}</p>
+                )}
+              </article>
+            )
+          })
         )
-      })}
+      )}
+
+      {section === 'conversations' && (
+        conversations.length === 0 ? (
+          <div className="empty">
+            <span className="ico">🗣️</span>
+            No conversations yet. Tap the mic in <strong>Ask</strong> and pick <strong>Conversation</strong>.
+          </div>
+        ) : (
+          conversations.map((c) => (
+            <article className="qa" key={c.conversation_id} onClick={() => setOpenConv(c.conversation_id)}>
+              <div className="qa-row">
+                <p className="q">{c.title}</p>
+                <span className="nav-badge">{c.message_count}</span>
+                <button
+                  className="icon-btn danger"
+                  title="Delete conversation"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm('Delete this conversation?')) onDeleteConversation(c.conversation_id)
+                  }}
+                >🗑</button>
+                <span className="chevron">›</span>
+              </div>
+              <p className="a preview">{new Date(c.created_at).toLocaleString()}</p>
+            </article>
+          ))
+        )
+      )}
     </section>
   )
 }

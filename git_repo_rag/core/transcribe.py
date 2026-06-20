@@ -42,3 +42,42 @@ class VoiceTranscriber:
         except Exception as exc:  # noqa: BLE001
             msg = f"Transcription failed: {exc}"
             return {"error": msg}, status.HTTP_502_BAD_GATEWAY, msg
+
+
+class VoiceSynthesizer:
+    """Turn text into spoken audio via Groq PlayAI TTS (OpenAI-compatible)."""
+
+    def __init__(self, model: str = "canopylabs/orpheus-v1-english", voice: str = "tara"):
+        load_dotenv()
+        self.model = model
+        self.voice = voice
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            api_key = os.getenv("GROQ_API_KEY")
+            if not api_key:
+                raise RuntimeError("GROQ_API_KEY is not set.")
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.groq.com/openai/v1",
+            )
+        return self._client
+
+    def synthesize(self, text):
+        """text: str -> (audio_bytes | None, status, message). WAV bytes on success."""
+        text = (text or "").strip()
+        if not text:
+            return None, status.HTTP_400_BAD_REQUEST, "text is required."
+
+        try:
+            result = self.client.audio.speech.create(
+                model=self.model,
+                voice=self.voice,
+                input=text,
+                response_format="wav",
+            )
+            return result.read(), status.HTTP_200_OK, "Synthesized"
+        except Exception as exc:  # noqa: BLE001
+            return None, status.HTTP_502_BAD_GATEWAY, f"TTS failed: {exc}"

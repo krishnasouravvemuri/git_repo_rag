@@ -66,6 +66,57 @@ export function askQuestion(question, repo_id) {
   return request('POST', 'ask', { question, repo_id: repo_id || null })
 }
 
+// ---- questions history (DB) ----
+export function listQuestions() {
+  return request('GET', 'questions')
+}
+export function deleteQuestion(id) {
+  return request('DELETE', `questions/${id}`)
+}
+
+// ---- conversations (DB) ----
+export function listConversations() {
+  return request('GET', 'conversations')
+}
+export function startConversation(repo_id, title) {
+  return request('POST', 'conversations', { repo_id: repo_id || null, title: title || null })
+}
+export function getConversation(id) {
+  return request('GET', `conversations/${id}`)
+}
+export function deleteConversation(id) {
+  return request('DELETE', `conversations/${id}`)
+}
+export function sendConversationTurn(id, question) {
+  return request('POST', `conversations/${id}/turn`, { question })
+}
+
+// ---- text-to-speech: returns an audio Blob ----
+export async function speak(text) {
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const res = await fetch(`${BASE}/speak`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ text }),
+  })
+  if (res.status === 401) {
+    clearSession()
+    throw new Error('Session expired. Please log in again.')
+  }
+  if (!res.ok) {
+    let msg = `TTS failed (${res.status})`
+    try {
+      const json = await res.json()
+      msg = json?.data?.error || json?.meta?.message || msg
+    } catch { /* non-json error body */ }
+    throw new Error(msg)
+  }
+  return res.blob()
+}
+
 export async function transcribeAudio(blob) {
   const headers = {}
   const token = getToken()

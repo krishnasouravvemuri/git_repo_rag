@@ -106,3 +106,30 @@ class RAGSearch:
         )
         response = self.llm.invoke(prompt)
         return response.content, results
+
+    def chat(self, query: str, history=None, repo_id: Optional[str] = None,
+             top_k: Optional[int] = None):
+        """Multi-turn answer. `history` = list of {"role", "content"} for prior turns.
+
+        Retrieval is re-run for the latest user message; prior turns are injected
+        so the model can resolve follow-ups ("what about that function?").
+        """
+        results = self.retrieve(query, repo_id=repo_id, top_k=top_k)
+        context = self._format_context(results)
+
+        convo = ""
+        for turn in history or []:
+            role = "User" if turn.get("role") == "user" else "Assistant"
+            convo += f"{role}: {turn.get('content', '')}\n"
+
+        prompt = (
+            "You are a senior engineer in an ongoing spoken conversation with the user "
+            "about a codebase. Answer using ONLY the code context below and the prior "
+            "conversation. If the context lacks the information, say so plainly and do "
+            "NOT guess. Keep replies concise and natural since they will be read aloud.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Conversation so far:\n{convo}\n"
+            f"User: {query}\nAssistant:"
+        )
+        response = self.llm.invoke(prompt)
+        return response.content, results

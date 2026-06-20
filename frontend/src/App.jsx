@@ -3,17 +3,23 @@ import Auth from './Auth'
 import IngestForm from './IngestForm'
 import RepoList from './RepoList'
 import Ask from './Ask'
+import Conversation from './Conversation'
 import History from './History'
-import { clearSession, getEmail, getToken, listRepos } from './api'
+import {
+  clearSession,
+  deleteConversation,
+  deleteQuestion,
+  getEmail,
+  getToken,
+  listConversations,
+  listQuestions,
+  listRepos,
+} from './api'
 
 const NAV = [
   { id: 'add', label: 'Add Repo', ico: '➕' },
   { id: 'repos', label: 'Repositories', ico: '📚' },
 ]
-
-function historyKey(email) {
-  return `rag_history_${email}`
-}
 
 export default function App() {
   const [email, setEmail] = useState(getToken() ? getEmail() : null)
@@ -21,8 +27,10 @@ export default function App() {
   const [openId, setOpenId] = useState(null) // repo whose detail is open
   const [reposError, setReposError] = useState('')
   const [screen, setScreen] = useState('add') // 'add' | 'repos' | 'detail'
-  const [detailTab, setDetailTab] = useState('ask') // 'ask' | 'history'
-  const [history, setHistory] = useState([])
+  const [detailTab, setDetailTab] = useState('ask') // 'ask' | 'history' | 'conversation'
+  const [convId, setConvId] = useState(null) // active conversation when in 'conversation' tab
+  const [questions, setQuestions] = useState([])
+  const [conversations, setConversations] = useState([])
 
   const refreshRepos = useCallback(async () => {
     setReposError('')
@@ -35,61 +43,61 @@ export default function App() {
     }
   }, [])
 
+  const refreshHistory = useCallback(async () => {
+    try {
+      const [q, c] = await Promise.all([listQuestions(), listConversations()])
+      setQuestions(q.questions || [])
+      setConversations(c.conversations || [])
+    } catch (err) {
+      if (err.message.includes('Session expired')) setEmail(null)
+    }
+  }, [])
+
   useEffect(() => {
     if (!email) return
     refreshRepos()
-    try {
-      setHistory(JSON.parse(localStorage.getItem(historyKey(email)) || '[]'))
-    } catch {
-      setHistory([])
-    }
-  }, [email, refreshRepos])
-
-  function addHistory(entry) {
-    setHistory((prev) => {
-      const next = [entry, ...prev].slice(0, 200)
-      localStorage.setItem(historyKey(email), JSON.stringify(next))
-      return next
-    })
-  }
-
-  function clearHistory(repoId) {
-    setHistory((prev) => {
-      const next = prev.filter((h) => h.repoId !== repoId)
-      localStorage.setItem(historyKey(email), JSON.stringify(next))
-      return next
-    })
-  }
-
-  function deleteHistory(ts) {
-    setHistory((prev) => {
-      const next = prev.filter((h) => h.ts !== ts)
-      localStorage.setItem(historyKey(email), JSON.stringify(next))
-      return next
-    })
-  }
-
-  function editHistory(ts, question) {
-    setHistory((prev) => {
-      const next = prev.map((h) => (h.ts === ts ? { ...h, question } : h))
-      localStorage.setItem(historyKey(email), JSON.stringify(next))
-      return next
-    })
-  }
+    refreshHistory()
+  }, [email, refreshRepos, refreshHistory])
 
   function handleLogout() {
     clearSession()
     setEmail(null)
     setRepos([])
     setOpenId(null)
-    setHistory([])
+    setQuestions([])
+    setConversations([])
     setScreen('add')
   }
 
   function openRepo(id) {
     setOpenId(id)
     setDetailTab('ask')
+    setConvId(null)
     setScreen('detail')
+  }
+
+  function startConversation(conversationId = null) {
+    setConvId(conversationId)
+    setDetailTab('conversation')
+  }
+
+  function continueConversation(conversationId, repoId) {
+    if (repoId && repoId !== openId) setOpenId(repoId)
+    startConversation(conversationId)
+  }
+
+  async function handleDeleteQuestion(id) {
+    try {
+      await deleteQuestion(id)
+      setQuestions((prev) => prev.filter((q) => q.id !== id))
+    } catch { /* ignore */ }
+  }
+
+  async function handleDeleteConversation(id) {
+    try {
+      await deleteConversation(id)
+      setConversations((prev) => prev.filter((c) => c.conversation_id !== id))
+    } catch { /* ignore */ }
   }
 
   if (!email) {
@@ -97,7 +105,8 @@ export default function App() {
   }
 
   const openRepoObj = repos.find((r) => r.repo_id === openId)
-  const repoHistory = history.filter((h) => h.repoId === openId)
+  const repoQuestions = questions.filter((q) => q.repo_id === openId)
+  const repoConversations = conversations.filter((c) => c.repo_id === openId)
 
   return (
     <div className="shell">
@@ -171,25 +180,45 @@ export default function App() {
                 💬 Ask
               </button>
               <button
-                className={`tab${detailTab === 'history' ? ' active' : ''}`}
-                onClick={() => setDetailTab('history')}
+                className={`tab${detailTab === 'conversation' ? ' active' : ''}`}
+                onClick={() => startConversation(null)}
               >
-                🗂️ History{repoHistory.length > 0 ? ` (${repoHistory.length})` : ''}
+                🗣️ Conversation
+              </button>
+              <button
+                className={`tab${detailTab === 'history' ? ' active' : ''}`}
+                onClick={() => { setDetailTab('history'); refreshHistory() }}
+              >
+                🗂️ History
               </button>
             </div>
 
-            {detailTab === 'ask' ? (
+            {detailTab === 'ask' && (
               <Ask
                 repos={repos}
                 selectedId={openId}
-                onAnswered={(e) => addHistory({ ...e, repoId: openId })}
+                onAnswered={refreshHistory}
+                onStartConversation={() => startConversation(null)}
               />
-            ) : (
+            )}
+
+            {detailTab === 'conversation' && (
+              <Conversation
+                repos={repos}
+                selectedId={openId}
+                conversationId={convId}
+                onChanged={refreshHistory}
+                onExit={() => { setDetailTab('history'); refreshHistory() }}
+              />
+            )}
+
+            {detailTab === 'history' && (
               <History
-                items={repoHistory}
-                onClear={() => clearHistory(openId)}
-                onDelete={deleteHistory}
-                onEdit={editHistory}
+                questions={repoQuestions}
+                conversations={repoConversations}
+                onDeleteQuestion={handleDeleteQuestion}
+                onDeleteConversation={handleDeleteConversation}
+                onContinueConversation={continueConversation}
               />
             )}
           </>
